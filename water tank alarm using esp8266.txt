@@ -1,0 +1,115 @@
+#define BLYNK_TEMPLATE_ID "*************"
+#define BLYNK_TEMPLATE_NAME "***************"
+#define BLYNK_AUTH_TOKEN "************************"
+
+#include <ESP8266WiFi.h>
+#include <BlynkSimpleEsp8266.h>
+
+char ssid[] = "****";  // wifi name
+char pass[] = "&**&*&*&";  // passward
+
+#define TRIG_PIN 14     // D5
+#define ECHO_PIN 12     // D6
+
+#define RED_LED 5       // D1
+#define BLUE_LED 4      // D2
+#define GREEN_LED 0     // D3
+
+BlynkTimer timer;
+
+long duration;
+float distance_cm;
+int level_percent;
+bool sendFlag = true;
+
+// Notification flags
+bool lowNotified = false;
+bool fullNotified = false;
+
+void setup() {
+  Serial.begin(9600);
+  Blynk.begin(BLYNK_AUTH_TOKEN, ssid, pass);
+
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+
+  pinMode(RED_LED, OUTPUT);
+  pinMode(BLUE_LED, OUTPUT);
+  pinMode(GREEN_LED, OUTPUT);
+
+  timer.setInterval(300000L, sendToBlynk); // every 5 min
+}
+
+// Live update switch (V3)
+BLYNK_WRITE(V3) {
+  int value = param.asInt();
+  if (value == 1) {
+    sendToBlynk(); // Send live data
+    timer.setTimeout(10000L, []() {
+      Blynk.virtualWrite(V3, 0); // Auto OFF after 10 sec
+    });
+  }
+}
+
+void sendToBlynk() {
+  measureWaterLevel();
+
+  Blynk.virtualWrite(V0, level_percent);  // Send % level
+  Blynk.virtualWrite(V1, distance_cm);    // Send distance
+
+  // Notifications
+  if (level_percent < 20 && !lowNotified) {
+    Blynk.logEvent("low_water_please_fill_tank", "⚠️ Water level low: " + String(level_percent) + "%");
+    lowNotified = true;
+    fullNotified = false;
+  }
+  else if (level_percent >= 85 && !fullNotified) {
+    Blynk.logEvent("tank_full_please_off_moter", "✅ Tank is full: " + String(level_percent) + "%");
+    fullNotified = true;
+    lowNotified = false;
+  }
+  else if (level_percent >= 20 && level_percent < 85) {
+    lowNotified = false;
+    fullNotified = false;
+  }
+}
+
+void measureWaterLevel() {
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+
+  duration = pulseIn(ECHO_PIN, HIGH);
+  distance_cm = duration * 0.034 / 2.0;
+
+  if (distance_cm > 100.0) distance_cm = 100.0;  // Clamp for 100 cm tank
+
+  level_percent = map(distance_cm, 100, 0, 0, 100);
+  if (level_percent < 0) level_percent = 0;
+  if (level_percent > 100) level_percent = 100;
+
+  updateLEDs(level_percent);
+}
+
+void updateLEDs(int level) {
+  if (level >= 80) {
+    digitalWrite(GREEN_LED, HIGH);
+    digitalWrite(BLUE_LED, LOW);
+    digitalWrite(RED_LED, LOW);
+  } else if (level >= 20 && level < 80) {
+    digitalWrite(GREEN_LED, LOW);
+    digitalWrite(BLUE_LED, HIGH);
+    digitalWrite(RED_LED, LOW);
+  } else {
+    digitalWrite(GREEN_LED, LOW);
+    digitalWrite(BLUE_LED, LOW);
+    digitalWrite(RED_LED, HIGH);
+  }
+}
+
+void loop() {
+  Blynk.run();
+  timer.run();
+}
